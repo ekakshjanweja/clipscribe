@@ -42,6 +42,14 @@ export default function Home() {
     if (!response.ok) throw new Error(data.error || "Could not read the queue.");
     setQueue(data);
   }
+  async function cancelQueuedJob(id: string) {
+    try {
+      const response = await fetch(`${API_URL}/jobs/${id}`, { method: "DELETE" });
+      if (!response.ok) { const data = await response.json(); throw new Error(data.error || "Could not cancel this task."); }
+      if (job?.id === id) { setJob(null); localStorage.removeItem("clipscribe-job"); setError("Queued task cancelled."); }
+      await refreshQueue();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not cancel this task."); }
+  }
 
   useEffect(() => {
     refreshModels().catch(() => setModelMessage("Model manager is unavailable. Start the Python API first."));
@@ -87,7 +95,7 @@ export default function Home() {
 
   return <main className="shell">
     <header><a className="brand" href="/">clipscribe</a><nav><button type="button" onClick={() => document.querySelector("#scanner")?.scrollIntoView({ behavior: "smooth" })}>scanner</button><button type="button" onClick={() => document.querySelector("#queue")?.scrollIntoView({ behavior: "smooth" })}>queue</button><a href="/history">history</a><button type="button" onClick={() => document.querySelector("#models")?.scrollIntoView({ behavior: "smooth" })}>models</button></nav></header>
-    <section id="queue" className="queue" aria-live="polite"><div><p className="eyebrow">QUEUE</p><strong>{queue?.counts.processing ?? 0} running · {queue?.counts.queued ?? 0} queued</strong></div><div className="queueCounts"><span>{queue?.counts.complete ?? 0} done</span><span>{queue?.counts.failed ?? 0} failed</span></div>{queue && queue.active.length > 0 && <div className="queueActive">{queue.active.map((item) => <a href={`/?job=${item.id}`} key={item.id}>{item.filename} · {item.status === "processing" ? `${item.progress}%` : "queued"}</a>)}</div>}</section>
+    <section id="queue" className="queue" aria-live="polite"><div><p className="eyebrow">QUEUE</p><strong>{queue?.counts.processing ?? 0} running · {queue?.counts.queued ?? 0} queued</strong></div><div className="queueCounts"><span>{queue?.counts.complete ?? 0} done</span><span>{queue?.counts.failed ?? 0} failed</span></div>{queue && queue.active.length > 0 && <div className="queueActive">{queue.active.map((item) => <div className="queueItem" key={item.id}><a href={`/?job=${item.id}`}>{item.filename} · {item.status === "processing" ? `${item.progress}%` : "queued"}</a>{item.status === "queued" && <button type="button" onClick={() => cancelQueuedJob(item.id)} aria-label={`Cancel queued task ${item.filename}`}>Cancel</button>}</div>)}</div>}</section>
     <section id="scanner" className="workbench">
       <form onSubmit={submit} className="source">
         <p className="eyebrow">01 / UPLOAD</p><h2>Video or photo</h2>

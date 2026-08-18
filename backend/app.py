@@ -221,6 +221,25 @@ def get_job(job_id: str):
     return jsonify(job=public_job(row))
 
 
+@app.delete("/jobs/<job_id>")
+def cancel_queued_job(job_id: str):
+    try:
+        ensure_schema()
+        with connection() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
+            if not row:
+                return jsonify(error="This OCR job no longer exists."), 404
+            if row["status"] != "queued":
+                return jsonify(error="Only queued tasks can be cancelled. Running OCR continues until it finishes."), 409
+            conn.execute("DELETE FROM jobs WHERE id=%s", (job_id,))
+    except Exception:
+        app.logger.exception("Could not cancel OCR job")
+        return jsonify(error="Could not cancel this queued task. Please try again."), 503
+    for source in UPLOADS.glob(f"{job_id}.*"):
+        source.unlink(missing_ok=True)
+    return "", 204
+
+
 @app.get("/jobs")
 def list_jobs():
     limit = min(max(int(request.args.get("limit", 30)), 1), 100)
