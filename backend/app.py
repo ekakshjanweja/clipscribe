@@ -234,6 +234,21 @@ def list_jobs():
     return jsonify(jobs=[public_job(row) for row in rows])
 
 
+@app.get("/queue")
+def queue_status():
+    try:
+        ensure_schema()
+        with connection() as conn:
+            counts = {status: 0 for status in ("queued", "processing", "complete", "failed")}
+            for row in conn.execute("SELECT status, count(*) AS total FROM jobs GROUP BY status").fetchall():
+                counts[row["status"]] = row["total"]
+            active = conn.execute("SELECT * FROM jobs WHERE status IN ('queued', 'processing') ORDER BY created_at").fetchall()
+    except Exception:
+        app.logger.exception("Could not read OCR queue")
+        return jsonify(error="The local queue is unavailable. Please try again."), 503
+    return jsonify(counts=counts, active=[public_job(row) for row in active])
+
+
 @app.get("/jobs/<job_id>/download/<extension>")
 def download_job(job_id: str, extension: str):
     if extension not in {"txt", "md"}:

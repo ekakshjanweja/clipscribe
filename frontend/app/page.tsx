@@ -5,6 +5,7 @@ import { ChangeEvent, DragEvent, FormEvent, useEffect, useState } from "react";
 type Segment = { start: string; end: string; text: string };
 type Scan = { text: string; segments: Segment[]; language: string; duration: string; frames_processed: number; cleaned_blocks: number };
 type Job = { id: string; filename: string; status: "queued" | "processing" | "complete" | "failed"; progress: number; stage: string; error?: string; result?: Scan | null };
+type Queue = { counts: Record<"queued" | "processing" | "complete" | "failed", number>; active: Job[] };
 type Model = { id: string; name: string; description: string; status: "ready" | "installing" | "not-installed" | "unavailable"; size: string; log?: string };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5001";
@@ -17,6 +18,7 @@ export default function Home() {
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState("");
   const [models, setModels] = useState<Model[]>([]);
+  const [queue, setQueue] = useState<Queue | null>(null);
   const [modelMessage, setModelMessage] = useState("");
   const working = job?.status === "queued" || job?.status === "processing";
 
@@ -34,12 +36,20 @@ export default function Home() {
     if (data.job.status === "complete") { setScan(data.job.result); localStorage.removeItem("clipscribe-job"); }
     if (data.job.status === "failed") { setError(data.job.error || "The scan could not finish."); localStorage.removeItem("clipscribe-job"); }
   }
+  async function refreshQueue() {
+    const response = await fetch(`${API_URL}/queue`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not read the queue.");
+    setQueue(data);
+  }
 
   useEffect(() => {
     refreshModels().catch(() => setModelMessage("Model manager is unavailable. Start the Python API first."));
+    refreshQueue().catch(() => undefined);
     const stored = new URLSearchParams(window.location.search).get("job") || localStorage.getItem("clipscribe-job");
     if (stored) refreshJob(stored).catch(() => localStorage.removeItem("clipscribe-job"));
   }, []);
+  useEffect(() => { const timer = window.setInterval(() => refreshQueue().catch(() => undefined), 1500); return () => window.clearInterval(timer); }, []);
   useEffect(() => {
     if (!working || !job) return;
     const timer = window.setInterval(() => refreshJob(job.id).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not read job status.")), 1200);
@@ -71,12 +81,13 @@ export default function Home() {
       const response = await fetch(`${API_URL}/jobs`, { method: "POST", body });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not queue the scan.");
-      setJob(data.job); localStorage.setItem("clipscribe-job", data.job.id);
+      setJob(data.job); setQueue(null); localStorage.setItem("clipscribe-job", data.job.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not queue the scan."); }
   }
 
   return <main className="shell">
-    <header><a className="brand" href="/">clipscribe</a><nav><button type="button" onClick={() => document.querySelector("#scanner")?.scrollIntoView({ behavior: "smooth" })}>scanner</button><a href="/history">history</a><button type="button" onClick={() => document.querySelector("#models")?.scrollIntoView({ behavior: "smooth" })}>models</button></nav></header>
+    <header><a className="brand" href="/">clipscribe</a><nav><button type="button" onClick={() => document.querySelector("#scanner")?.scrollIntoView({ behavior: "smooth" })}>scanner</button><button type="button" onClick={() => document.querySelector("#queue")?.scrollIntoView({ behavior: "smooth" })}>queue</button><a href="/history">history</a><button type="button" onClick={() => document.querySelector("#models")?.scrollIntoView({ behavior: "smooth" })}>models</button></nav></header>
+    <section id="queue" className="queue" aria-live="polite"><div><p className="eyebrow">QUEUE</p><strong>{queue?.counts.processing ?? 0} running · {queue?.counts.queued ?? 0} queued</strong></div><div className="queueCounts"><span>{queue?.counts.complete ?? 0} done</span><span>{queue?.counts.failed ?? 0} failed</span></div>{queue && queue.active.length > 0 && <div className="queueActive">{queue.active.map((item) => <a href={`/?job=${item.id}`} key={item.id}>{item.filename} · {item.status === "processing" ? `${item.progress}%` : "queued"}</a>)}</div>}</section>
     <section id="scanner" className="workbench">
       <form onSubmit={submit} className="source">
         <p className="eyebrow">01 / UPLOAD</p><h2>Video or photo</h2>
