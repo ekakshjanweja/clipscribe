@@ -100,7 +100,10 @@ def process(job: dict) -> dict:
             rows = run_paddle_mobile(frames, timestamps, job_id)
             engine_label = "PaddleOCR Mobile · local CPU"
         else:
-            rows = run_paddle_vl(frames, timestamps_file)
+            def paddle_progress(done: int, total: int) -> None:
+                progress = 35 + int(55 * done / max(total, 1))
+                update(job_id, progress, f"PaddleOCR-VL frame {done} of {total}")
+            rows = run_paddle_vl(frames, timestamps_file, paddle_progress)
             engine_label = "PaddleOCR-VL 1.6 · local CPU"
         update(job_id, 90, "Cleaning transcript")
 

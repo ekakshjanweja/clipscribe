@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 from difflib import SequenceMatcher
@@ -64,19 +65,41 @@ def frame_timestamps(video: Path) -> list[float]:
     return [float(value) for value in values if value and value != "N/A"]
 
 
-def run_paddle_vl(frames: Path, timestamps: Path) -> list[dict[str, str]]:
+def run_paddle_vl(frames: Path, timestamps: Path, on_progress=None) -> list[dict[str, str]]:
     """Use PaddleOCR-VL 1.6 from its dedicated local environment."""
     if not PADDLE_PYTHON.is_file():
         raise RuntimeError(
             "PaddleOCR-VL is not installed yet. Run ./scripts/install-paddle-vl.sh, then try again."
         )
-    output = subprocess.run(
-        [str(PADDLE_PYTHON), str(PADDLE_WORKER), str(frames), str(timestamps)],
-        check=True,
-        capture_output=True,
-        text=True,
+    if on_progress is None:
+        output = subprocess.run(
+            [str(PADDLE_PYTHON), str(PADDLE_WORKER), str(frames), str(timestamps)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(output.stdout)
+    progress_file = frames.parent / "paddle-progress.json"
+    result_file = frames.parent / "paddle-result.json"
+    process = subprocess.Popen(
+        [str(PADDLE_PYTHON), str(PADDLE_WORKER), str(frames), str(timestamps), str(progress_file), str(result_file)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
     )
-    return json.loads(output.stdout)
+    previous = -1
+    while process.poll() is None:
+        try:
+            progress = json.loads(progress_file.read_text(encoding="utf-8"))
+            done, total = int(progress["done"]), int(progress["total"])
+            if done != previous:
+                on_progress(done, total)
+                previous = done
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            pass
+        time.sleep(0.5)
+    process.wait()
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, process.args)
+    return json.loads(result_file.read_text(encoding="utf-8"))
 
 
 def normalize_for_comparison(text: str) -> str:

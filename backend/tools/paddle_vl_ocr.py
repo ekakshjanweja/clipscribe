@@ -19,6 +19,8 @@ def timestamp(seconds: float) -> str:
 def main() -> None:
     frames = sorted(Path(sys.argv[1]).glob("*.jpg"))
     timestamps = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    progress_file = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+    result_file = Path(sys.argv[4]) if len(sys.argv) > 4 else None
     pipeline = PaddleOCRVL(pipeline_version="v1.6", device="cpu")
     rows: list[dict[str, str]] = []
 
@@ -30,12 +32,20 @@ def main() -> None:
             markdown_files = list(Path(output_dir).rglob("*.md"))
             text = "\n".join(path.read_text(encoding="utf-8").strip() for path in markdown_files).strip()
         if not text:
+            if progress_file:
+                progress_file.write_text(json.dumps({"done": index + 1, "total": len(frames)}), encoding="utf-8")
             continue
         start = timestamps[index] if index < len(timestamps) else float(index)
         end = timestamps[index + 1] if index + 1 < len(timestamps) else start
         rows.append({"start": timestamp(start), "end": timestamp(end), "text": text})
+        if progress_file:
+            progress_file.write_text(json.dumps({"done": index + 1, "total": len(frames)}), encoding="utf-8")
 
-    print(json.dumps(rows, ensure_ascii=False))
+    output = json.dumps(rows, ensure_ascii=False)
+    if result_file:
+        result_file.write_text(output, encoding="utf-8")
+    else:
+        print(output)
 
 
 if __name__ == "__main__":
