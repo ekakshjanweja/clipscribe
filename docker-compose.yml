@@ -10,6 +10,8 @@ services:
       - paddle-cache:/root/.paddlex
       - huggingface-cache:/root/.cache/huggingface
       - clipscribe-cache:/app/.cache
+    ports:
+      - "127.0.0.1:5349:5001"
     restart: unless-stopped
 
   frontend:
@@ -21,7 +23,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4329:3000"
     restart: unless-stopped
 
   cloudflared:

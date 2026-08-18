@@ -38,7 +38,7 @@ On a Linux homelab, Apple Vision is not available; use PaddleOCR-VL from the mod
 docker compose up -d --build
 ```
 
-Open `http://localhost:3000` on the homelab, or tunnel it over SSH with `ssh -L 3000:localhost:3000 user@homelab`. The port is deliberately bound to loopback, so the backend and frontend are not exposed to the LAN. Paddle model downloads are stored in persistent Docker volumes.
+The frontend is available on `http://127.0.0.1:4329` and the API on `http://127.0.0.1:5349`, both bound to loopback. From another machine, tunnel the frontend over SSH with `ssh -L 4329:localhost:4329 user@homelab`, then open http://localhost:4329. Paddle model downloads are stored in persistent Docker volumes.
 
 ### Cloudflare: `clipscribe.ekaksh.in`
 
@@ -48,7 +48,7 @@ The Compose stack includes an optional, remotely managed Cloudflare Tunnel. It e
 2. In **Cloudflare Zero Trust → Networks → Tunnels**, create a tunnel named `clipscribe` and copy its Docker token.
 3. In the tunnel's **Routes**, add a published application:
    - Hostname: `clipscribe.ekaksh.in`
-   - Service: `http://frontend:3000`
+   - Service: `http://frontend:3000` (when using the Docker-managed tunnel) or `http://localhost:4329` (when using the homelab's existing system `cloudflared` tunnel)
 4. On the homelab, create the secret environment file and start the optional profile:
 
 ```bash
