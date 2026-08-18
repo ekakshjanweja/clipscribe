@@ -8,11 +8,11 @@ type Job = { id: string; filename: string; status: "queued" | "processing" | "co
 type Model = { id: string; name: string; description: string; status: "ready" | "installing" | "not-installed" | "unavailable"; size: string; log?: string };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5001";
-const engineHelp = { vision: "Fast and built in.", "paddle-vl": "Better for complex pages. Takes longer." };
+const engineHelp = { vision: "Fast and built in.", tesseract: "Fastest for clear English text.", "paddle-mobile": "Fast neural OCR for everyday clips.", "paddle-vl": "Best for complex pages. Takes longer." };
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
-  const [engine, setEngine] = useState<"vision" | "paddle-vl">("vision");
+  const [engine, setEngine] = useState<"vision" | "tesseract" | "paddle-mobile" | "paddle-vl">("paddle-mobile");
   const [scan, setScan] = useState<Scan | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState("");
@@ -24,7 +24,7 @@ export default function Home() {
     const response = await fetch(`${API_URL}/models`);
     const data = await response.json();
     setModels(data.models);
-    if (data.models.find((model: Model) => model.id === "apple-vision")?.status === "unavailable") setEngine("paddle-vl");
+    if (data.models.find((model: Model) => model.id === "apple-vision")?.status === "unavailable") setEngine("paddle-mobile");
   }
   async function refreshJob(id: string) {
     const response = await fetch(`${API_URL}/jobs/${id}`);
@@ -37,7 +37,7 @@ export default function Home() {
 
   useEffect(() => {
     refreshModels().catch(() => setModelMessage("Model manager is unavailable. Start the Python API first."));
-    const stored = localStorage.getItem("clipscribe-job");
+    const stored = new URLSearchParams(window.location.search).get("job") || localStorage.getItem("clipscribe-job");
     if (stored) refreshJob(stored).catch(() => localStorage.removeItem("clipscribe-job"));
   }, []);
   useEffect(() => {
@@ -76,13 +76,13 @@ export default function Home() {
   }
 
   return <main className="shell">
-    <header><a className="brand" href="/">clipscribe</a><nav><button type="button" onClick={() => document.querySelector("#scanner")?.scrollIntoView({ behavior: "smooth" })}>scanner</button><button type="button" onClick={() => document.querySelector("#models")?.scrollIntoView({ behavior: "smooth" })}>models</button></nav></header>
+    <header><a className="brand" href="/">clipscribe</a><nav><button type="button" onClick={() => document.querySelector("#scanner")?.scrollIntoView({ behavior: "smooth" })}>scanner</button><a href="/history">history</a><button type="button" onClick={() => document.querySelector("#models")?.scrollIntoView({ behavior: "smooth" })}>models</button></nav></header>
     <section id="scanner" className="workbench">
       <form onSubmit={submit} className="source">
         <p className="eyebrow">01 / UPLOAD</p><h2>Video or photo</h2>
         <input id="video" type="file" accept="video/*,image/jpeg,image/png,image/heic,image/heif,image/tiff,image/bmp,image/gif" hidden onChange={(event: ChangeEvent<HTMLInputElement>) => selectFile(event.target.files?.[0])} />
         <label htmlFor="video" className="drop" onDrop={onDrop} onDragOver={(event) => event.preventDefault()}><b>+</b><strong>{file ? file.name : "Drop a video or photo"}</strong><small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB · click to replace` : "video or image · MP4, MOV, JPG, PNG, HEIC"}</small></label>
-        <label className="field">OCR ENGINE<select value={engine} onChange={(event) => setEngine(event.target.value as "vision" | "paddle-vl")}><option value="vision" disabled={models.find((model) => model.id === "apple-vision")?.status === "unavailable"}>Apple Vision — native & fast</option><option value="paddle-vl">PaddleOCR-VL 1.6 — advanced</option></select></label>
+        <label className="field">OCR ENGINE<select value={engine} onChange={(event) => setEngine(event.target.value as "vision" | "tesseract" | "paddle-mobile" | "paddle-vl")}><option value="vision" disabled={models.find((model) => model.id === "apple-vision")?.status === "unavailable"}>Apple Vision — native & fast</option><option value="tesseract">Tesseract — fastest</option><option value="paddle-mobile">PaddleOCR Mobile — fast</option><option value="paddle-vl">PaddleOCR-VL 1.6 — advanced</option></select></label>
         <p className="hint">{engineHelp[engine]}</p><button disabled={!file || working}>{working ? `${job?.progress ?? 0}% · ${job?.stage ?? "Queued"}` : "Get text ↗"}</button>
       </form>
       <section className="results" aria-live="polite"><div className="resultTitle"><div><p className="eyebrow">02 / TRANSCRIPT</p><h2>{scan ? "Ready" : "Your text"}</h2></div>{scan && <div className="actions"><button onClick={() => navigator.clipboard.writeText(scan.text)}>Copy</button><button onClick={() => download("txt")}>.txt</button><button onClick={() => download("md")}>.md</button></div>}</div>

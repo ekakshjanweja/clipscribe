@@ -138,6 +138,8 @@ def models():
     log = PADDLE_INSTALL_LOG.read_text(encoding="utf-8", errors="replace")[-1200:] if PADDLE_INSTALL_LOG.exists() else ""
     return jsonify(models=[
         {"id": "apple-vision", "name": "Apple Vision", "description": "Built into macOS. No download needed.", "status": "ready" if sys.platform == "darwin" else "unavailable", "size": "native"},
+        {"id": "tesseract", "name": "Tesseract", "description": "Fastest local option for clear English text.", "status": "ready" if shutil.which("tesseract") else "unavailable", "size": "native"},
+        {"id": "paddle-mobile", "name": "PaddleOCR Mobile", "description": "Fast local neural OCR. Downloads small weights on first use.", "status": "ready" if PADDLE_PYTHON.is_file() else "not-installed", "size": "lightweight"},
         {"id": "paddle-vl", "name": "PaddleOCR-VL 1.6", "description": "Advanced local layout, table, and document OCR.", "status": "installing" if installing else ("ready" if paddle_is_ready() else "not-installed"), "size": "downloads model files on first setup", "log": log},
     ])
 
@@ -182,7 +184,7 @@ def create_job():
     if error:
         return error, status
     engine = request.form.get("engine", "paddle-vl")
-    if engine not in {"vision", "paddle-vl"}:
+    if engine not in {"vision", "tesseract", "paddle-mobile", "paddle-vl"}:
         return jsonify(error="Choose a supported OCR engine."), 400
     if engine == "vision" and sys.platform != "darwin":
         return jsonify(error="Apple Vision is only available on macOS. Choose PaddleOCR-VL."), 400
@@ -217,6 +219,19 @@ def get_job(job_id: str):
     if not row:
         return jsonify(error="This OCR job no longer exists."), 404
     return jsonify(job=public_job(row))
+
+
+@app.get("/jobs")
+def list_jobs():
+    limit = min(max(int(request.args.get("limit", 30)), 1), 100)
+    try:
+        ensure_schema()
+        with connection() as conn:
+            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT %s", (limit,)).fetchall()
+    except Exception:
+        app.logger.exception("Could not list OCR jobs")
+        return jsonify(error="The local history is unavailable. Please try again."), 503
+    return jsonify(jobs=[public_job(row) for row in rows])
 
 
 @app.get("/jobs/<job_id>/download/<extension>")

@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PADDLE_VL_PYTHON=/usr/local/bin/python CLIPSCRIBE_DOCKER=1 CLIPSCRIBE_CACHE_DIR=/app/.cache
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libgl1 libgomp1 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libgl1 libgomp1 tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt \
     && pip install --no-cache-dir paddlepaddle==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ \

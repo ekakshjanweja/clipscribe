@@ -6,7 +6,7 @@ import json
 import time
 from pathlib import Path
 
-from app import ALLOWED_EXTENSIONS, clean_transcript, frame_timestamps, run_paddle_vl
+from app import clean_transcript, frame_timestamps, run_paddle_vl
 from db import connection, ensure_schema
 
 UPLOADS = Path("/data/uploads")
@@ -15,6 +15,44 @@ UPLOADS = Path("/data/uploads")
 def update(job_id: str, progress: int, stage: str) -> None:
     with connection() as conn:
         conn.execute("UPDATE jobs SET progress=%s, stage=%s, updated_at=now() WHERE id=%s", (progress, stage, job_id))
+
+
+def timestamp(seconds: float) -> str:
+    hours, remaining = divmod(seconds, 3600)
+    minutes, seconds = divmod(remaining, 60)
+    return f"{int(hours):02}:{int(minutes):02}:{seconds:05.2f}"
+
+
+def text_rows(frames: Path, timestamps: list[float], recognize, job_id: str, label: str) -> list[dict[str, str]]:
+    files = sorted(frames.glob("*.jpg"))
+    rows: list[dict[str, str]] = []
+    for index, frame in enumerate(files):
+        value = recognize(frame).strip()
+        if value:
+            start = timestamps[index] if index < len(timestamps) else float(index)
+            end = timestamps[index + 1] if index + 1 < len(timestamps) else start
+            rows.append({"start": timestamp(start), "end": timestamp(end), "text": value})
+        progress = 35 + int(55 * (index + 1) / max(len(files), 1))
+        update(job_id, progress, f"{label} frame {index + 1} of {len(files)}")
+    return rows
+
+
+def run_tesseract(frames: Path, timestamps: list[float], job_id: str) -> list[dict[str, str]]:
+    import subprocess
+    return text_rows(frames, timestamps, lambda frame: subprocess.run(["tesseract", str(frame), "stdout", "-l", "eng", "--oem", "1", "--psm", "3"], check=True, capture_output=True, text=True).stdout, job_id, "Tesseract")
+
+
+def run_paddle_mobile(frames: Path, timestamps: list[float], job_id: str) -> list[dict[str, str]]:
+    from paddleocr import PaddleOCR
+    ocr = PaddleOCR(text_detection_model_name="PP-OCRv5_mobile_det", text_recognition_model_name="en_PP-OCRv5_mobile_rec", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)
+
+    def recognize(frame: Path) -> str:
+        result = next(iter(ocr.predict(str(frame))))
+        payload = result.json if hasattr(result, "json") else {}
+        data = payload.get("res", payload) if isinstance(payload, dict) else {}
+        return "\n".join(str(text) for text in data.get("rec_texts", []) if text)
+
+    return text_rows(frames, timestamps, recognize, job_id, "PaddleOCR Mobile")
 
 
 def claim() -> dict | None:
@@ -33,8 +71,8 @@ def process(job: dict) -> dict:
     source = next(UPLOADS.glob(f"{job_id}.*"), None)
     if not source:
         raise RuntimeError("The uploaded file is no longer available.")
-    if job["engine"] != "paddle-vl":
-        raise RuntimeError("Apple Vision is unavailable on the Linux homelab. Choose PaddleOCR-VL.")
+    if job["engine"] not in {"tesseract", "paddle-mobile", "paddle-vl"}:
+        raise RuntimeError("Choose a Linux-compatible OCR engine.")
 
     import shutil
     import subprocess
@@ -55,7 +93,15 @@ def process(job: dict) -> dict:
         timestamps = frame_timestamps(source)
         timestamps_file.write_text(json.dumps(timestamps), encoding="utf-8")
         update(job_id, 35, f"Reading {len(timestamps)} frames")
-        rows = run_paddle_vl(frames, timestamps_file)
+        if job["engine"] == "tesseract":
+            rows = run_tesseract(frames, timestamps, job_id)
+            engine_label = "Tesseract · local CPU"
+        elif job["engine"] == "paddle-mobile":
+            rows = run_paddle_mobile(frames, timestamps, job_id)
+            engine_label = "PaddleOCR Mobile · local CPU"
+        else:
+            rows = run_paddle_vl(frames, timestamps_file)
+            engine_label = "PaddleOCR-VL 1.6 · local CPU"
         update(job_id, 90, "Cleaning transcript")
 
     clean_rows = clean_transcript(rows)
@@ -63,7 +109,7 @@ def process(job: dict) -> dict:
         "text": "\n\n".join(row["text"] for row in clean_rows),
         "segments": clean_rows,
         "raw_segments": rows,
-        "language": "PaddleOCR-VL 1.6 · local CPU",
+        "language": engine_label,
         "duration": rows[-1]["end"] if rows else "00:00:00",
         "frames_processed": len(timestamps),
         "cleaned_blocks": len(clean_rows),
