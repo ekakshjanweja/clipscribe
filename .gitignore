@@ -1,0 +1,17 @@
+# Python
+.venv/
+.venv-paddleocr/
+.venv-paddleocr.py313t-backup/
+__pycache__/
+*.py[cod]
+
+# Local OCR artifacts and model caches
+.cache/
+
+# Next.js
+frontend/node_modules/
+frontend/.next/
+
+# Local editor and OS files
+.DS_Store
+.env*

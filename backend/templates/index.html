@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Private, native macOS video OCR." />
+    <title>ClipScribe — native video OCR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <main class="shell">
+      <nav><a class="brand" href="/">Clip<span>Scribe</span></a><p>NATIVE MAC OCR / NO SUBSCRIPTION</p></nav>
+      <section class="intro">
+        <div><p class="eyebrow">Video frames → searchable words</p><h1>Make every visible<br />word <em>findable.</em></h1></div>
+        <p class="lede">Drop in a recording and extract signs, slides, captions, and lower thirds. Frames are processed by Apple Vision on this Mac.</p>
+      </section>
+      <section class="workbench" aria-labelledby="upload-heading">
+        <div class="upload-side">
+          <p class="step">01 / SOURCE</p><h2 id="upload-heading">Choose a video</h2>
+          <form id="upload-form">
+            <input id="video-input" name="video" type="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,video/x-msvideo,video/x-m4v" hidden />
+            <label for="video-input" id="drop-zone" class="drop-zone">
+              <span class="plus">+</span><strong>Drop video here</strong><small>or browse files · MP4, MOV, MKV, WebM</small>
+            </label>
+            <div id="file-info" class="file-info" hidden><span id="file-name"></span><button type="button" id="clear-file" aria-label="Remove selected video">×</button></div>
+            <label class="engine-choice" for="engine"><span>OCR engine</span><select id="engine" name="engine"><option value="vision">Apple Vision — fast, native</option><option value="paddle-vl">PaddleOCR-VL 1.6 — advanced layouts</option></select></label>
+            <button id="submit-button" class="transcribe" type="submit" disabled>Scan video <span>↗</span></button>
+          </form>
+          <p id="engine-note" class="fine-print">Apple Vision is the fast, native default. PaddleOCR-VL 1.6 is slower but better for complex documents, tables, and mixed layouts.</p>
+        </div>
+        <div class="result-side">
+          <div class="result-header"><div><p class="step">02 / DETECTED TEXT</p><h2>Your words, ready to use</h2></div><div id="result-actions" class="result-actions" hidden><button id="copy-button" class="copy">Copy text</button><button id="download-txt" class="copy">Download .txt</button><button id="download-md" class="copy">Download .md</button></div></div>
+          <div id="empty-state" class="empty-state"><div class="sound-bars"><i></i><i></i><i></i><i></i><i></i></div><p>Detected text will appear here.</p></div>
+          <div id="loading-state" class="loading-state" hidden><div class="spinner"></div><h3>Reading every frame…</h3><p id="progress-message">This may take a while for long or high‑FPS videos</p></div>
+          <div id="transcript" class="transcript" hidden><div class="stats"><span id="language"></span><span id="duration"></span><span id="cleanup-summary"></span></div><div id="segments"></div></div>
+          <p id="error-message" class="error" role="alert" hidden></p>
+        </div>
+      </section>
+      <footer><span>PRIVATE BY DESIGN</span><span>FFMPEG + APPLE VISION</span><span>FRAMES ARE TEMPORARY</span></footer>
+    </main>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
