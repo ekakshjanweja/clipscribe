@@ -30,6 +30,35 @@ Open http://localhost:3000. The Next.js dev server proxies `/api/*` to Flask on 
 
 The **Local models** panel in the frontend can download and prepare PaddleOCR-VL 1.6 without using a terminal. The job runs locally, writes a small status log under `.cache/`, and downloads the model weights on your Mac.
 
+## Homelab / Docker
+
+On a Linux homelab, Apple Vision is not available; use PaddleOCR-VL from the model panel instead. Start the stack with:
+
+```bash
+docker compose up -d --build
+```
+
+Open `http://localhost:3000` on the homelab, or tunnel it over SSH with `ssh -L 3000:localhost:3000 user@homelab`. The port is deliberately bound to loopback, so the backend and frontend are not exposed to the LAN. Paddle model downloads are stored in persistent Docker volumes.
+
+### Cloudflare: `clipscribe.ekaksh.in`
+
+The Compose stack includes an optional, remotely managed Cloudflare Tunnel. It exposes only the Next.js frontend; the Python API remains private on the Docker network.
+
+1. Add `ekaksh.in` to Cloudflare and ensure its nameservers are active there.
+2. In **Cloudflare Zero Trust → Networks → Tunnels**, create a tunnel named `clipscribe` and copy its Docker token.
+3. In the tunnel's **Routes**, add a published application:
+   - Hostname: `clipscribe.ekaksh.in`
+   - Service: `http://frontend:3000`
+4. On the homelab, create the secret environment file and start the optional profile:
+
+```bash
+cp .env.example .env
+# Edit .env and set CLOUDFLARE_TUNNEL_TOKEN to the token from Cloudflare.
+docker compose --profile cloudflare up -d --build
+```
+
+Cloudflare creates the DNS record as part of adding the published hostname. Before sharing the URL, protect it with a Cloudflare Access policy, since otherwise anybody with the address can submit uploads and use the OCR machine.
+
 ## Cost and reliability choices
 
 - **Apple Vision OCR:** native macOS text recognition, $0 per minute, private and reliable for printed/on-screen text.

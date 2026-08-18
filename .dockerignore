@@ -1,0 +1,10 @@
+.git
+.venv
+.venv-paddleocr
+.venv-paddleocr.py313t-backup
+.cache
+web
+frontend/node_modules
+frontend/.next
+.env
+__pycache__

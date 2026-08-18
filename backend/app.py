@@ -20,11 +20,13 @@ app.config["MAX_CONTENT_LENGTH"] = 1_000 * 1024 * 1024  # 1 GB
 ALLOWED_EXTENSIONS = {"mp4", "mov", "mkv", "webm", "avi", "m4v", "jpg", "jpeg", "png", "heic", "heif", "tif", "tiff", "bmp", "gif"}
 ROOT = Path(__file__).parent
 PROJECT_ROOT = ROOT.parent
+CACHE_ROOT = Path(os.environ.get("CLIPSCRIBE_CACHE_DIR", PROJECT_ROOT / ".cache"))
 VISION_SOURCE = ROOT / "tools" / "vision_ocr.swift"
 VISION_BINARY = ROOT / ".cache" / "vision_ocr"
 PADDLE_WORKER = ROOT / "tools" / "paddle_vl_ocr.py"
 PADDLE_PYTHON = Path(os.environ.get("PADDLE_VL_PYTHON", PROJECT_ROOT / ".venv-paddleocr" / "bin" / "python"))
-PADDLE_INSTALL_LOG = PROJECT_ROOT / ".cache" / "paddle-vl-install.log"
+PADDLE_INSTALL_LOG = CACHE_ROOT / "paddle-vl-install.log"
+PADDLE_READY_FILE = CACHE_ROOT / "paddle-vl.ready"
 paddle_install: subprocess.Popen[str] | None = None
 
 
@@ -124,7 +126,7 @@ def paddle_is_ready() -> bool:
         [str(PADDLE_PYTHON), "-c", "from paddleocr import PaddleOCRVL"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    return check.returncode == 0
+    return check.returncode == 0 and PADDLE_READY_FILE.exists()
 
 
 @app.get("/models")
@@ -132,7 +134,7 @@ def models():
     installing = paddle_install is not None and paddle_install.poll() is None
     log = PADDLE_INSTALL_LOG.read_text(encoding="utf-8", errors="replace")[-1200:] if PADDLE_INSTALL_LOG.exists() else ""
     return jsonify(models=[
-        {"id": "apple-vision", "name": "Apple Vision", "description": "Built into macOS. No download needed.", "status": "ready", "size": "native"},
+        {"id": "apple-vision", "name": "Apple Vision", "description": "Built into macOS. No download needed.", "status": "ready" if sys.platform == "darwin" else "unavailable", "size": "native"},
         {"id": "paddle-vl", "name": "PaddleOCR-VL 1.6", "description": "Advanced local layout, table, and document OCR.", "status": "installing" if installing else ("ready" if paddle_is_ready() else "not-installed"), "size": "downloads model files on first setup", "log": log},
     ])
 
@@ -144,8 +146,9 @@ def install_paddle_vl():
         return jsonify(status="installing"), 202
     PADDLE_INSTALL_LOG.parent.mkdir(exist_ok=True)
     log_handle = PADDLE_INSTALL_LOG.open("w", encoding="utf-8")
+    command = [str(PADDLE_PYTHON), str(ROOT / "tools" / "prefetch_paddle_vl.py")] if os.environ.get("CLIPSCRIBE_DOCKER") else ["/bin/bash", "-lc", "./backend/scripts/install-paddle-vl.sh && .venv-paddleocr/bin/python backend/tools/prefetch_paddle_vl.py"]
     paddle_install = subprocess.Popen(
-        ["/bin/bash", "-lc", "./backend/scripts/install-paddle-vl.sh && .venv-paddleocr/bin/python backend/tools/prefetch_paddle_vl.py"],
+        command,
         cwd=PROJECT_ROOT, stdout=log_handle, stderr=subprocess.STDOUT, text=True,
     )
     return jsonify(status="installing"), 202
@@ -173,6 +176,8 @@ def scan():
         return jsonify(error="FFmpeg is not installed or is not on your PATH."), 500
     if engine not in {"vision", "paddle-vl"}:
         return jsonify(error="Choose a supported OCR engine."), 400
+    if engine == "vision" and sys.platform != "darwin":
+        return jsonify(error="Apple Vision is only available on macOS. Choose PaddleOCR-VL."), 400
 
     with tempfile.TemporaryDirectory(prefix="clipscribe-") as temp_dir:
         source = Path(temp_dir) / f"source.{video.filename.rsplit('.', 1)[1].lower()}"

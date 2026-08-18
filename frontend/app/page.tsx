@@ -4,7 +4,7 @@ import { ChangeEvent, DragEvent, FormEvent, useEffect, useState } from "react";
 
 type Segment = { start: string; end: string; text: string };
 type Scan = { text: string; segments: Segment[]; language: string; duration: string; frames_processed: number; cleaned_blocks: number };
-type Model = { id: string; name: string; description: string; status: "ready" | "installing" | "not-installed"; size: string; log?: string };
+type Model = { id: string; name: string; description: string; status: "ready" | "installing" | "not-installed" | "unavailable"; size: string; log?: string };
 
 const engineHelp = {
   vision: "Fast and built in.",
@@ -20,7 +20,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [models, setModels] = useState<Model[]>([]);
   const [modelMessage, setModelMessage] = useState("");
-  async function refreshModels() { const response = await fetch(`${API_URL}/models`); const data = await response.json(); setModels(data.models); }
+  async function refreshModels() { const response = await fetch(`${API_URL}/models`); const data = await response.json(); setModels(data.models); if (data.models.find((model: Model) => model.id === "apple-vision")?.status === "unavailable") setEngine("paddle-vl"); }
   useEffect(() => { refreshModels().catch(() => setModelMessage("Model manager is unavailable. Start the Python API first.")); }, []);
   useEffect(() => { if (!models.some((model) => model.status === "installing")) return; const timer = window.setInterval(() => refreshModels(), 2000); return () => window.clearInterval(timer); }, [models]);
   async function installPaddle() { setModelMessage(""); try { const response = await fetch(`${API_URL}/models/paddle-vl/install`, { method: "POST" }); if (!response.ok) throw new Error("Could not start download."); setModelMessage("Download started. This may take a few minutes."); await refreshModels(); } catch (reason) { setModelMessage(reason instanceof Error ? reason.message : "Could not start download."); } }
@@ -55,7 +55,7 @@ export default function Home() {
         <p className="eyebrow">01 / UPLOAD</p><h2>Video or photo</h2>
         <input id="video" type="file" accept="video/*,image/jpeg,image/png,image/heic,image/heif,image/tiff,image/bmp,image/gif" hidden onChange={(event: ChangeEvent<HTMLInputElement>) => selectFile(event.target.files?.[0])} />
         <label htmlFor="video" className="drop" onDrop={onDrop} onDragOver={(event) => event.preventDefault()}><b>+</b><strong>{file ? file.name : "Drop a video or photo"}</strong><small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB · click to replace` : "video or image · MP4, MOV, JPG, PNG, HEIC"}</small></label>
-        <label className="field">OCR ENGINE<select value={engine} onChange={(event) => setEngine(event.target.value as "vision" | "paddle-vl")}><option value="vision">Apple Vision — native & fast</option><option value="paddle-vl">PaddleOCR-VL 1.6 — advanced</option></select></label>
+        <label className="field">OCR ENGINE<select value={engine} onChange={(event) => setEngine(event.target.value as "vision" | "paddle-vl")}><option value="vision" disabled={models.find((model) => model.id === "apple-vision")?.status === "unavailable"}>Apple Vision — native & fast</option><option value="paddle-vl">PaddleOCR-VL 1.6 — advanced</option></select></label>
         <p className="hint">{engineHelp[engine]}</p><button disabled={!file || loading}>{loading ? "Reading…" : "Get text ↗"}</button>
       </form>
       <section className="results" aria-live="polite"><div className="resultTitle"><div><p className="eyebrow">02 / TRANSCRIPT</p><h2>{scan ? "Ready" : "Your text"}</h2></div>{scan && <div className="actions"><button onClick={() => navigator.clipboard.writeText(scan.text)}>Copy</button><button onClick={() => download("txt")}>.txt</button><button onClick={() => download("md")}>.md</button></div>}</div>

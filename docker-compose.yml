@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      CLIPSCRIBE_DOCKER: "1"
+      PADDLE_VL_PYTHON: /usr/local/bin/python
+    volumes:
+      - paddle-cache:/root/.paddlex
+      - huggingface-cache:/root/.cache/huggingface
+      - clipscribe-cache:/app/.cache
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        OCR_API_URL: http://backend:5001
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["cloudflare"]
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  paddle-cache:
+  huggingface-cache:
+  clipscribe-cache:
