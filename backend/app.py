@@ -9,10 +9,12 @@ import subprocess
 import tempfile
 import os
 import sys
+import uuid
 from pathlib import Path
 from difflib import SequenceMatcher
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
+from db import connection, ensure_schema, public_job
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1_000 * 1024 * 1024  # 1 GB
@@ -27,6 +29,7 @@ PADDLE_WORKER = ROOT / "tools" / "paddle_vl_ocr.py"
 PADDLE_PYTHON = Path(os.environ.get("PADDLE_VL_PYTHON", PROJECT_ROOT / ".venv-paddleocr" / "bin" / "python"))
 PADDLE_INSTALL_LOG = CACHE_ROOT / "paddle-vl-install.log"
 PADDLE_READY_FILE = CACHE_ROOT / "paddle-vl.ready"
+UPLOADS = Path(os.environ.get("CLIPSCRIBE_UPLOADS_DIR", "/data/uploads"))
 paddle_install: subprocess.Popen[str] | None = None
 
 
@@ -162,6 +165,72 @@ def index():
 @app.get("/health")
 def health():
     return jsonify(status="ok")
+
+
+def valid_upload():
+    video = request.files.get("video")
+    if not video or not video.filename:
+        return None, jsonify(error="Choose a video file first."), 400
+    if "." not in video.filename or video.filename.rsplit(".", 1)[1].lower() not in ALLOWED_EXTENSIONS:
+        return None, jsonify(error="Supported formats: common video files plus JPG, PNG, HEIC, TIFF, BMP, and GIF images."), 400
+    return video, None, None
+
+
+@app.post("/jobs")
+def create_job():
+    video, error, status = valid_upload()
+    if error:
+        return error, status
+    engine = request.form.get("engine", "paddle-vl")
+    if engine not in {"vision", "paddle-vl"}:
+        return jsonify(error="Choose a supported OCR engine."), 400
+    if engine == "vision" and sys.platform != "darwin":
+        return jsonify(error="Apple Vision is only available on macOS. Choose PaddleOCR-VL."), 400
+    job_id = uuid.uuid4()
+    extension = video.filename.rsplit(".", 1)[1].lower()
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    destination = UPLOADS / f"{job_id}.{extension}"
+    video.save(destination)
+    try:
+        ensure_schema()
+        with connection() as conn:
+            row = conn.execute(
+                "INSERT INTO jobs (id, filename, engine) VALUES (%s, %s, %s) RETURNING *",
+                (str(job_id), video.filename, engine),
+            ).fetchone()
+        return jsonify(job=public_job(row)), 202
+    except Exception:
+        destination.unlink(missing_ok=True)
+        app.logger.exception("Could not create OCR job")
+        return jsonify(error="The local job queue is unavailable. Please try again."), 503
+
+
+@app.get("/jobs/<job_id>")
+def get_job(job_id: str):
+    try:
+        ensure_schema()
+        with connection() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id=%s", (job_id,)).fetchone()
+    except Exception:
+        app.logger.exception("Could not read OCR job")
+        return jsonify(error="The local job queue is unavailable. Please try again."), 503
+    if not row:
+        return jsonify(error="This OCR job no longer exists."), 404
+    return jsonify(job=public_job(row))
+
+
+@app.get("/jobs/<job_id>/download/<extension>")
+def download_job(job_id: str, extension: str):
+    if extension not in {"txt", "md"}:
+        return jsonify(error="Choose txt or md."), 400
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id=%s", (job_id,)).fetchone()
+    if not row or row["status"] != "complete":
+        return jsonify(error="The transcript is not ready yet."), 409
+    result = row["result"]
+    segments = result["segments"]
+    content = "\n\n".join(f"[{segment['start']}] {segment['text']}" for segment in segments) if extension == "txt" else "# ClipScribe clean transcript\n\n" + "\n\n".join(f"## {segment['start']}\n\n{segment['text']}" for segment in segments)
+    return Response(content, mimetype=f"text/{'plain' if extension == 'txt' else 'markdown'}; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="clipscribe-{job_id}.{extension}"'})
 
 
 @app.post("/scan")

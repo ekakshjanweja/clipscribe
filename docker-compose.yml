@@ -1,4 +1,19 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: clipscribe
+      POSTGRES_USER: clipscribe
+      POSTGRES_PASSWORD: clipscribe-local
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipscribe -d clipscribe"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -6,12 +21,38 @@ services:
     environment:
       CLIPSCRIBE_DOCKER: "1"
       PADDLE_VL_PYTHON: /usr/local/bin/python
+      DATABASE_URL: postgresql://clipscribe:clipscribe-local@postgres:5432/clipscribe
+      CLIPSCRIBE_UPLOADS_DIR: /data/uploads
     volumes:
       - paddle-cache:/root/.paddlex
       - huggingface-cache:/root/.cache/huggingface
       - clipscribe-cache:/app/.cache
+      - job-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:5349:5001"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "worker.py"]
+    environment:
+      CLIPSCRIBE_DOCKER: "1"
+      PADDLE_VL_PYTHON: /usr/local/bin/python
+      DATABASE_URL: postgresql://clipscribe:clipscribe-local@postgres:5432/clipscribe
+      CLIPSCRIBE_UPLOADS_DIR: /data/uploads
+    volumes:
+      - paddle-cache:/root/.paddlex
+      - huggingface-cache:/root/.cache/huggingface
+      - clipscribe-cache:/app/.cache
+      - job-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -35,6 +76,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   paddle-cache:
   huggingface-cache:
   clipscribe-cache:
+  job-data:
