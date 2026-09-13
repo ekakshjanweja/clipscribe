@@ -21,25 +21,26 @@ def main() -> None:
     timestamps = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     progress_file = Path(sys.argv[3]) if len(sys.argv) > 3 else None
     result_file = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+    start = int(sys.argv[5]) if len(sys.argv) > 5 else 0
     pipeline = PaddleOCRVL(pipeline_version="v1.6", device="cpu")
-    rows: list[dict[str, str]] = []
+    rows: list[dict] = []
 
     # One frame at a time keeps each result mapped to its video timestamp.
-    for index, frame in enumerate(frames):
+    for index in range(start, len(frames)):
+        frame = frames[index]
         with tempfile.TemporaryDirectory(prefix="clipscribe-paddle-") as output_dir:
             result = next(iter(pipeline.predict(str(frame))))
             result.save_to_markdown(save_path=output_dir)
             markdown_files = list(Path(output_dir).rglob("*.md"))
             text = "\n".join(path.read_text(encoding="utf-8").strip() for path in markdown_files).strip()
-        if not text:
-            if progress_file:
-                progress_file.write_text(json.dumps({"done": index + 1, "total": len(frames)}), encoding="utf-8")
-            continue
-        start = timestamps[index] if index < len(timestamps) else float(index)
-        end = timestamps[index + 1] if index + 1 < len(timestamps) else start
-        rows.append({"start": timestamp(start), "end": timestamp(end), "text": text})
+        if text:
+            frame_start = timestamps[index] if index < len(timestamps) else float(index)
+            frame_end = timestamps[index + 1] if index + 1 < len(timestamps) else frame_start
+            rows.append({"frame_index": index, "start": timestamp(frame_start), "end": timestamp(frame_end), "text": text})
         if progress_file:
             progress_file.write_text(json.dumps({"done": index + 1, "total": len(frames)}), encoding="utf-8")
+        if result_file:
+            result_file.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
 
     output = json.dumps(rows, ensure_ascii=False)
     if result_file:

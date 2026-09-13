@@ -22,7 +22,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS jobs_status_created_idx ON jobs(status, created_at);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS partial JSONB;
 """
+
+ACTIVE_STATUSES = ("queued", "processing", "pause_requested", "cancel_requested", "paused")
 
 
 @contextmanager
@@ -36,16 +39,30 @@ def ensure_schema() -> None:
         conn.execute(SCHEMA)
 
 
+def partial_summary(row: dict) -> dict | None:
+    partial = row.get("partial")
+    if not partial:
+        return None
+    clean_rows = partial.get("clean_rows") or []
+    return {
+        "segments": clean_rows,
+        "frames_done": int(partial.get("frames_done", 0)),
+        "frames_total": int(partial.get("frames_total", 0)),
+    }
+
+
 def public_job(row: dict) -> dict:
     result = row.get("result")
+    status = row["status"]
     return {
         "id": str(row["id"]),
         "filename": row["filename"],
         "engine": row["engine"],
-        "status": row["status"],
+        "status": status,
         "progress": row["progress"],
         "stage": row["stage"],
         "error": row.get("error"),
-        "result": result if row["status"] == "complete" else None,
+        "result": result if status == "complete" else None,
+        "partial": partial_summary(row) if status not in {"complete", "failed"} else None,
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
     }

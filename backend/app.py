@@ -253,13 +253,76 @@ def cancel_queued_job(job_id: str):
             if not row:
                 return jsonify(error="This OCR job no longer exists."), 404
             if row["status"] != "queued":
-                return jsonify(error="Only queued tasks can be cancelled. Running OCR continues until it finishes."), 409
+                return jsonify(error="Only queued tasks can be removed. Use the cancel action for running or paused tasks."), 409
             conn.execute("DELETE FROM jobs WHERE id=%s", (job_id,))
     except Exception:
         app.logger.exception("Could not cancel OCR job")
         return jsonify(error="Could not cancel this queued task. Please try again."), 503
     for source in UPLOADS.glob(f"{job_id}.*"):
         source.unlink(missing_ok=True)
+    return "", 204
+
+
+@app.post("/jobs/<job_id>/pause")
+def pause_job(job_id: str):
+    try:
+        with connection() as conn:
+            row = conn.execute("SELECT status FROM jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
+            if not row:
+                return jsonify(error="This OCR job no longer exists."), 404
+            status = row["status"]
+            if status == "paused":
+                return jsonify(job_status="paused")
+            if status == "queued":
+                conn.execute("UPDATE jobs SET status='paused', stage='Paused before start', updated_at=now() WHERE id=%s", (job_id,))
+            elif status == "processing":
+                conn.execute("UPDATE jobs SET status='pause_requested', stage='Pausing after this frame', updated_at=now() WHERE id=%s", (job_id,))
+            else:
+                return jsonify(error="Only queued or running tasks can be paused."), 409
+    except Exception:
+        app.logger.exception("Could not pause OCR job")
+        return jsonify(error="Could not pause this task. Please try again."), 503
+    return "", 204
+
+
+@app.post("/jobs/<job_id>/resume")
+def resume_job(job_id: str):
+    try:
+        with connection() as conn:
+            row = conn.execute("SELECT status FROM jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
+            if not row:
+                return jsonify(error="This OCR job no longer exists."), 404
+            if row["status"] != "paused":
+                return jsonify(error="Only paused tasks can be resumed."), 409
+            conn.execute("UPDATE jobs SET status='queued', stage='Queued — will resume where it stopped', error=NULL, updated_at=now() WHERE id=%s", (job_id,))
+    except Exception:
+        app.logger.exception("Could not resume OCR job")
+        return jsonify(error="Could not resume this task. Please try again."), 503
+    return "", 204
+
+
+@app.post("/jobs/<job_id>/cancel")
+def cancel_job(job_id: str):
+    try:
+        with connection() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
+            if not row:
+                return jsonify(error="This OCR job no longer exists."), 404
+            status = row["status"]
+            if status == "queued":
+                conn.execute("DELETE FROM jobs WHERE id=%s", (job_id,))
+            elif status in {"processing", "pause_requested"}:
+                conn.execute("UPDATE jobs SET status='cancel_requested', stage='Cancelling after this frame', updated_at=now() WHERE id=%s", (job_id,))
+            elif status == "paused":
+                conn.execute("UPDATE jobs SET status='cancelled', stage='Cancelled', partial=NULL, updated_at=now() WHERE id=%s", (job_id,))
+            else:
+                return jsonify(error="This task has already finished."), 409
+    except Exception:
+        app.logger.exception("Could not cancel OCR job")
+        return jsonify(error="Could not cancel this task. Please try again."), 503
+    if status in {"queued", "paused"}:
+        for source in UPLOADS.glob(f"{job_id}.*"):
+            source.unlink(missing_ok=True)
     return "", 204
 
 
@@ -281,10 +344,10 @@ def queue_status():
     try:
         ensure_schema()
         with connection() as conn:
-            counts = {status: 0 for status in ("queued", "processing", "complete", "failed")}
+            counts = {status: 0 for status in ("queued", "processing", "paused", "complete", "failed", "cancelled")}
             for row in conn.execute("SELECT status, count(*) AS total FROM jobs GROUP BY status").fetchall():
                 counts[row["status"]] = row["total"]
-            active = conn.execute("SELECT * FROM jobs WHERE status IN ('queued', 'processing') ORDER BY created_at").fetchall()
+            active = conn.execute("SELECT * FROM jobs WHERE status IN ('queued', 'processing', 'pause_requested', 'cancel_requested', 'paused') ORDER BY created_at").fetchall()
     except Exception:
         app.logger.exception("Could not read OCR queue")
         return jsonify(error="The local queue is unavailable. Please try again."), 503

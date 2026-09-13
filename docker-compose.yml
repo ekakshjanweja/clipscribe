@@ -35,7 +35,7 @@ services:
       - "127.0.0.1:5349:5001"
     restart: unless-stopped
 
-  worker:
+  worker: &worker
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -45,6 +45,7 @@ services:
       PADDLE_VL_PYTHON: /usr/local/bin/python
       DATABASE_URL: postgresql://clipscribe:clipscribe-local@postgres:5432/clipscribe
       CLIPSCRIBE_UPLOADS_DIR: /data/uploads
+      CLIPSCRIBE_CHUNK_FRAMES: "20"
     volumes:
       - paddle-cache:/root/.paddlex
       - huggingface-cache:/root/.cache/huggingface
@@ -54,6 +55,8 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+
+  worker2: *worker
 
   frontend:
     build:
@@ -70,7 +73,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: ["cloudflare"]
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env - copy .env.example to .env and paste the token from Cloudflare Zero Trust > Networks > Tunnels}
     depends_on:
       - frontend
     restart: unless-stopped

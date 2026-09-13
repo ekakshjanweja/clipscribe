@@ -4,12 +4,15 @@ import { ChangeEvent, DragEvent, FormEvent, useEffect, useState } from "react";
 
 type Segment = { start: string; end: string; text: string };
 type Scan = { text: string; segments: Segment[]; language: string; duration: string; frames_processed: number; cleaned_blocks: number };
-type Job = { id: string; filename: string; status: "queued" | "processing" | "complete" | "failed"; progress: number; stage: string; error?: string; result?: Scan | null };
-type Queue = { counts: Record<"queued" | "processing" | "complete" | "failed", number>; active: Job[] };
+type Partial = { segments: Segment[]; frames_done: number; frames_total: number };
+type JobStatus = "queued" | "processing" | "pause_requested" | "cancel_requested" | "paused" | "cancelled" | "complete" | "failed";
+type Job = { id: string; filename: string; status: JobStatus; progress: number; stage: string; error?: string; result?: Scan | null; partial?: Partial | null };
+type Queue = { counts: Record<string, number>; active: Job[] };
 type Model = { id: string; name: string; description: string; status: "ready" | "installing" | "not-installed" | "unavailable"; size: string; log?: string };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5001";
 const engineHelp = { vision: "Fast and built in.", tesseract: "Fastest for clear English text.", "paddle-mobile": "Fast neural OCR for everyday clips.", "paddle-vl": "Best for complex pages. Takes longer." };
+const ACTIVE: JobStatus[] = ["queued", "processing", "pause_requested", "cancel_requested"];
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -20,7 +23,8 @@ export default function Home() {
   const [models, setModels] = useState<Model[]>([]);
   const [queue, setQueue] = useState<Queue | null>(null);
   const [modelMessage, setModelMessage] = useState("");
-  const working = job?.status === "queued" || job?.status === "processing";
+  const working = job ? ACTIVE.includes(job.status) : false;
+  const paused = job?.status === "paused";
 
   async function refreshModels() {
     const response = await fetch(`${API_URL}/models`);
@@ -30,11 +34,13 @@ export default function Home() {
   }
   async function refreshJob(id: string) {
     const response = await fetch(`${API_URL}/jobs/${id}`);
+    if (response.status === 404) { setJob(null); localStorage.removeItem("clipscribe-job"); return; }
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Could not find this job.");
     setJob(data.job);
     if (data.job.status === "complete") { setScan(data.job.result); localStorage.removeItem("clipscribe-job"); }
     if (data.job.status === "failed") { setError(data.job.error || "The scan could not finish."); localStorage.removeItem("clipscribe-job"); }
+    if (data.job.status === "cancelled") localStorage.removeItem("clipscribe-job");
   }
   async function refreshQueue() {
     const response = await fetch(`${API_URL}/queue`);
@@ -42,13 +48,17 @@ export default function Home() {
     if (!response.ok) throw new Error(data.error || "Could not read the queue.");
     setQueue(data);
   }
-  async function cancelQueuedJob(id: string) {
+  async function controlJob(id: string, action: "pause" | "resume" | "cancel") {
     try {
-      const response = await fetch(`${API_URL}/jobs/${id}`, { method: "DELETE" });
-      if (!response.ok) { const data = await response.json(); throw new Error(data.error || "Could not cancel this task."); }
-      if (job?.id === id) { setJob(null); localStorage.removeItem("clipscribe-job"); setError("Queued task cancelled."); }
-      await refreshQueue();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not cancel this task."); }
+      const response = await fetch(`${API_URL}/jobs/${id}/${action}`, { method: "POST" });
+      if (!response.ok && response.status !== 204) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Could not update this task.");
+      }
+      if (action === "cancel") setError("Task cancelled.");
+      if (job?.id === id) await refreshJob(id).catch(() => undefined);
+      await refreshQueue().catch(() => undefined);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update this task."); }
   }
 
   useEffect(() => {
@@ -93,9 +103,28 @@ export default function Home() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not queue the scan."); }
   }
 
+  function queueItemControls(item: Job) {
+    if (item.status === "queued") return <>
+      <button type="button" onClick={() => controlJob(item.id, "pause")} aria-label={`Pause ${item.filename}`}>Pause</button>
+      <button type="button" onClick={() => controlJob(item.id, "cancel")} aria-label={`Cancel ${item.filename}`}>Cancel</button>
+    </>;
+    if (item.status === "processing") return <>
+      <button type="button" onClick={() => controlJob(item.id, "pause")} aria-label={`Pause ${item.filename}`}>Pause</button>
+      <button type="button" onClick={() => controlJob(item.id, "cancel")} aria-label={`Cancel ${item.filename}`}>Cancel</button>
+    </>;
+    if (item.status === "paused") return <>
+      <button type="button" onClick={() => controlJob(item.id, "resume")} aria-label={`Resume ${item.filename}`}>Resume</button>
+      <button type="button" onClick={() => controlJob(item.id, "cancel")} aria-label={`Cancel ${item.filename}`}>Cancel</button>
+    </>;
+    if (item.status === "pause_requested") return <button type="button" disabled>Pausing…</button>;
+    if (item.status === "cancel_requested") return <button type="button" disabled>Cancelling…</button>;
+    return null;
+  }
+
+  const partial = job?.partial;
   return <main className="shell">
     <header><a className="brand" href="/">clipscribe</a><nav><button type="button" onClick={() => document.querySelector("#scanner")?.scrollIntoView({ behavior: "smooth" })}>scanner</button><button type="button" onClick={() => document.querySelector("#queue")?.scrollIntoView({ behavior: "smooth" })}>queue</button><a href="/history">history</a><button type="button" onClick={() => document.querySelector("#models")?.scrollIntoView({ behavior: "smooth" })}>models</button></nav></header>
-    <section id="queue" className="queue" aria-live="polite"><div><p className="eyebrow">QUEUE</p><strong>{queue?.counts.processing ?? 0} running · {queue?.counts.queued ?? 0} queued</strong></div><div className="queueCounts"><span>{queue?.counts.complete ?? 0} done</span><span>{queue?.counts.failed ?? 0} failed</span></div>{queue && queue.active.length > 0 && <div className="queueActive">{queue.active.map((item) => <div className="queueItem" key={item.id}><a href={`/?job=${item.id}`}>{item.filename} · {item.status === "processing" ? `${item.progress}%` : "queued"}</a>{item.status === "queued" && <button type="button" onClick={() => cancelQueuedJob(item.id)} aria-label={`Cancel queued task ${item.filename}`}>Cancel</button>}</div>)}</div>}</section>
+    <section id="queue" className="queue" aria-live="polite"><div><p className="eyebrow">QUEUE</p><strong>{queue?.counts.processing ?? 0} running · {queue?.counts.queued ?? 0} queued{queue?.counts.paused ? ` · ${queue.counts.paused} paused` : ""}</strong></div><div className="queueCounts"><span>{queue?.counts.complete ?? 0} done</span><span>{queue?.counts.failed ?? 0} failed</span></div>{queue && queue.active.length > 0 && <div className="queueActive">{queue.active.map((item) => <div className="queueItem" key={item.id}><a href={`/?job=${item.id}`}>{item.filename} · {item.status === "processing" ? `${item.progress}%` : item.status.replace("_", " ")}</a>{queueItemControls(item)}</div>)}</div>}</section>
     <section id="scanner" className="workbench">
       <form onSubmit={submit} className="source">
         <p className="eyebrow">01 / UPLOAD</p><h2>Video or photo</h2>
@@ -104,13 +133,23 @@ export default function Home() {
         <label className="field">OCR ENGINE<select value={engine} onChange={(event) => setEngine(event.target.value as "vision" | "tesseract" | "paddle-mobile" | "paddle-vl")}><option value="vision" disabled={models.find((model) => model.id === "apple-vision")?.status === "unavailable"}>Apple Vision — native & fast</option><option value="tesseract">Tesseract — fastest</option><option value="paddle-mobile">PaddleOCR Mobile — fast</option><option value="paddle-vl">PaddleOCR-VL 1.6 — advanced</option></select></label>
         <p className="hint">{engineHelp[engine]}</p><button disabled={!file || working}>{working ? `${job?.progress ?? 0}% · ${job?.stage ?? "Queued"}` : "Get text ↗"}</button>
       </form>
-      <section className="results" aria-live="polite"><div className="resultTitle"><div><p className="eyebrow">02 / TRANSCRIPT</p><h2>{scan ? "Ready" : "Your text"}</h2></div>{scan && <div className="actions"><button onClick={() => navigator.clipboard.writeText(scan.text)}>Copy</button><button onClick={() => download("txt")}>.txt</button><button onClick={() => download("md")}>.md</button></div>}</div>
-      {working && <div className="empty progress"><strong>{job?.progress ?? 0}%</strong><p>{job?.stage || "Queued"}</p><div className="progressTrack" role="progressbar" aria-label="OCR progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={job?.progress ?? 0}><i style={{ width: `${job?.progress ?? 0}%` }}/></div><small>This will keep running if you close this page.</small></div>}
-      {!working && !scan && <div className="empty"><div className="bars">|||||</div><p>{error || "Text will appear here."}</p></div>}
+      <section className="results" aria-live="polite"><div className="resultTitle"><div><p className="eyebrow">02 / TRANSCRIPT</p><h2>{scan ? "Ready" : paused ? "Paused" : "Your text"}</h2></div>{scan && <div className="actions"><button onClick={() => navigator.clipboard.writeText(scan.text)}>Copy</button><button onClick={() => download("txt")}>.txt</button><button onClick={() => download("md")}>.md</button></div>}</div>
+      {working && <div className="empty progress"><strong>{job?.progress ?? 0}%</strong><p>{job?.stage || "Queued"}</p><div className="progressTrack" role="progressbar" aria-label="OCR progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={job?.progress ?? 0}><i style={{ width: `${job?.progress ?? 0}%` }}/></div><small>This will keep running if you close this page.</small><div className="jobControls">{job && <><button type="button" onClick={() => controlJob(job.id, "pause")} disabled={job.status !== "processing" && job.status !== "queued"}>Pause</button><button type="button" onClick={() => controlJob(job.id, "cancel")} disabled={job.status === "cancel_requested"}>Cancel</button></>}</div></div>}
+      {!working && paused && job && <div className="empty progress"><strong>{job.progress}%</strong><p>Paused — {job.stage}</p><div className="jobControls"><button type="button" onClick={() => controlJob(job.id, "resume")}>Resume</button><button type="button" onClick={() => controlJob(job.id, "cancel")}>Cancel</button></div></div>}
+      {!working && !scan && !paused && job?.status === "cancelled" && <div className="empty"><div className="bars">|||||</div><p>Task cancelled.{partial?.segments.length ? " Partial text is shown below." : ""}</p>{partial && partial.segments.length > 0 && <PartialTranscript partial={partial} />}</div>}
+      {!working && !scan && !paused && job?.status !== "cancelled" && <div className="empty"><div className="bars">|||||</div><p>{error || "Text will appear here."}</p></div>}
+      {(working || paused) && partial && partial.segments.length > 0 && <PartialTranscript partial={partial} />}
       {scan && <><div className="stats"><span>{scan.language}</span><span>{scan.frames_processed} FRAMES → {scan.cleaned_blocks} CLEAN BLOCKS</span><span>ENDS {scan.duration}</span></div><div className="transcript">{scan.segments.map((segment, index) => <article key={`${segment.start}-${index}`}><time>{segment.start}</time><p>{segment.text}</p></article>)}</div></>}
       </section>
     </section>
     <section id="models" className="models" aria-labelledby="models-heading"><div className="modelHeading"><p className="eyebrow">MODELS</p><h2 id="models-heading">OCR engines</h2></div><div className="modelList">{models.map((model) => <article key={model.id} className="model"><div><strong>{model.name}</strong><p>{model.id === "apple-vision" ? "Built into your Mac." : "For harder layouts."}</p></div><div className="modelAction"><span className={`status ${model.status}`}>{model.status.replace("-", " ")}</span>{model.id === "paddle-vl" && model.status !== "ready" && <button type="button" onClick={installPaddle} disabled={model.status === "installing"}>{model.status === "installing" ? "Downloading…" : "Download ↗"}</button>}</div></article>)}</div>{modelMessage && <p className="modelMessage">{modelMessage}</p>}</section>
     <footer><span>LOCAL ONLY</span><span>FILES ARE TEMPORARY</span></footer>
   </main>;
+}
+
+function PartialTranscript({ partial }: { partial: Partial }) {
+  return <>
+    <p className="partialHead">PARTIAL TEXT · {partial.frames_done}/{partial.frames_total} FRAMES READ</p>
+    <div className="transcript partialTranscript">{partial.segments.map((segment, index) => <article key={`${segment.start}-${index}`}><time>{segment.start}</time><p>{segment.text}</p></article>)}</div>
+  </>;
 }
